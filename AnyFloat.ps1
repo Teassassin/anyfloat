@@ -18,7 +18,7 @@
     悬浮后：
       · 源窗口原地变透明 + 点击穿透 + 输入冻结，肉眼看不到也点不到
       · 从任务栏和 Alt+Tab 移除，只剩悬浮窗
-      · 悬停约 220ms 放大（仍是缩放画面），鼠标移开缩回
+      · 悬停约 90ms 放大（仍是缩放画面），鼠标移开缩回
       · 单击任意位置 → 动画展开回原位，恢复源窗口样式并激活
 
     配置：见下方 "===== 可调参数 ====="，改完重启脚本即可。
@@ -28,7 +28,11 @@
 param(
     [switch]$SelfTest,
     [switch]$DebugLog,
-    [int]$FloatHwnd = 0
+    [int]$FloatHwnd = 0,
+    # 测试用：强制把每显示器 DPI 当成这个值（0 = 读取真实值）
+    [int]$ForceDpi = 0,
+    # 测试用：打印合成几何布局表后退出（不常驻）
+    [switch]$GeomProbe
 )
 
 # ===== 可调参数 =====
@@ -45,6 +49,7 @@ $CaptureFps   = 12       # 抓帧频率（帧/秒），越高越流畅越吃 CPU
 $ExpandFps    = 20       # 放大状态下的抓帧频率
 $GlowPad      = 12       # 虚化边框厚度（像素）
 $ContentAlpha = 0.90     # 悬浮窗画面的不透明度（0.9 = 半透明）
+$ScaleWithDpi = $true    # 按每显示器 DPI 缩放胶囊/边距/光晕（高 DPI 屏上大小才一致）
 # ====================
 
 $ErrorActionPreference = 'Stop'
@@ -423,6 +428,9 @@ public class FloatTool : NativeWindow
     [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
     [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr mon, ref MONITORINFO mi);
+    // 每显示器 DPI（Win8.1+）。进程是 PER_MONITOR_AWARE_V2，所有坐标都是物理像素，
+    // 所以 UI 尺寸必须按 DPI 放大，否则 4K@150% 屏上的胶囊只有应有的三分之二大。
+    [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr mon, int dpiType, out uint dpiX, out uint dpiY);
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
     [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, out bool result, uint winIni);
@@ -473,6 +481,8 @@ public class FloatTool : NativeWindow
     public double ContentAlpha = 0.90;
     public int ExpandFps = 15;
     public int GraceMs = 260;
+    public bool ScaleWithDpi = true;   // 按每显示器 DPI 缩放胶囊/边距/光晕
+    public int ForceDpi = 0;           // 测试用：>0 时覆盖真实 DPI
 
     public class Floating
     {
@@ -481,6 +491,8 @@ public class FloatTool : NativeWindow
         public bool SavedMax;
         public Rectangle Pill, Expand, Work;
         public int Corner, Slot;
+        public IntPtr Mon;      // 源窗口所在显示器：堆叠槽位按"显示器 + 角落"分组
+        public int Dpi = 96;    // 该显示器的有效 DPI
         public Mode Mode, AnimTarget;
         public Rectangle AnimFrom, AnimTo;
         public int AnimStart, AnimDuration;
@@ -607,6 +619,85 @@ public class FloatTool : NativeWindow
 
     public int FloatingCount { get { return floats.Count; } }
 
+    // 几何自检（供 dev/_multimon_test.ps1 调用）：用合成数据跑真实的布局代码，
+    // 这样单屏机器也能验证多显示器 / 负坐标 / 高 DPI / 混合比例堆叠。
+    // 输出为制表符分隔，第一行是表头。
+    public string GeomProbe()
+    {
+        StringBuilder sb = new StringBuilder();
+        sb.AppendLine("case\tmon\twx\twy\tww\twh\tdpi\tcorner\tslot\tsrcW\tsrcH\tpillX\tpillY\tpillW\tpillH\texX\texY\texW\texH");
+
+        // ---- 单例：一台显示器 + 一个源窗口 ----
+        object[][] cases = new object[][]
+        {
+            new object[] { "solo_fhd_br",     0,    0, 1920, 1040,  96, 3, 1280,  720 },
+            new object[] { "solo_fhd_tl",     0,    0, 1920, 1040,  96, 0, 1280,  720 },
+            new object[] { "solo_left_neg", -1920,  0, 1920, 1040,  96, 1, 1600,  900 },
+            new object[] { "solo_4k_150",     0,    0, 3840, 2160, 144, 3, 2560, 1440 },
+            new object[] { "solo_4k_200",     0,    0, 3840, 2160, 192, 3, 2560, 1440 },
+            new object[] { "solo_portrait",   0,    0, 1080, 1920,  96, 2,  800,  600 },
+            new object[] { "solo_ultrawide",  0,    0, 1920, 1040,  96, 3, 3000,  400 },
+            new object[] { "solo_tall",       0,    0, 1920, 1040,  96, 3,  400, 2000 },
+            new object[] { "solo_tiny",       0,    0, 1920, 1040,  96, 3,  160,  120 },
+            new object[] { "solo_small_scr",  0,    0,  800,  560, 120, 3,  640,  480 }
+        };
+        foreach (object[] c in cases)
+        {
+            Rectangle pill, expand;
+            Layout(new Rectangle((int)c[1], (int)c[2], (int)c[3], (int)c[4]), (int)c[5], (int)c[6],
+                   (int)c[7], (int)c[8], null, out pill, out expand);
+            ProbeRow(sb, (string)c[0], 0,
+                     new Rectangle((int)c[1], (int)c[2], (int)c[3], (int)c[4]),
+                     (int)c[5], (int)c[6], 0, (int)c[7], (int)c[8], pill, expand);
+        }
+
+        // ---- 堆叠：3 个窗口落在左屏、3 个落在右屏，都是右下角 ----
+        // 比例故意各不相同，用来验证"按前序实际高度累加"和"跨屏槽位各自从 0 开始"
+        IntPtr monA = new IntPtr(0x11), monB = new IntPtr(0x22);
+        Rectangle wa = new Rectangle(0, 0, 1920, 1040);
+        Rectangle wb = new Rectangle(1920, 0, 2560, 1440);
+        int[][] specs = new int[][]
+        {
+            new int[] { 1280,  720 },
+            new int[] {  800,  600 },
+            new int[] { 1600,  400 },
+            new int[] {  600,  900 },
+            new int[] { 1920, 1080 },
+            new int[] {  300,  300 }
+        };
+
+        floats.Clear();
+        for (int i = 0; i < specs.Length; i++)
+        {
+            Floating f = new Floating();
+            f.Mon = (i < 3) ? monA : monB;
+            f.Work = (i < 3) ? wa : wb;
+            f.Dpi = (i < 3) ? 96 : 144;
+            f.Corner = 3;
+            f.Slot = SlotCount(3, f.Mon);
+            ComputeRects(f, new Rectangle(0, 0, specs[i][0], specs[i][1]));
+            floats.Add(f);
+            ProbeRow(sb, "stack" + i, (i < 3) ? 0 : 1, f.Work, f.Dpi, f.Corner, f.Slot,
+                     specs[i][0], specs[i][1], f.Pill, f.Expand);
+        }
+        floats.Clear();
+
+        return sb.ToString();
+    }
+
+    static void ProbeRow(StringBuilder sb, string name, int mon, Rectangle work, int dpi,
+                         int corner, int slot, int srcW, int srcH, Rectangle pill, Rectangle expand)
+    {
+        sb.AppendLine(string.Join("\t", new string[] {
+            name, mon.ToString(),
+            work.X.ToString(), work.Y.ToString(), work.Width.ToString(), work.Height.ToString(),
+            dpi.ToString(), corner.ToString(), slot.ToString(),
+            srcW.ToString(), srcH.ToString(),
+            pill.X.ToString(), pill.Y.ToString(), pill.Width.ToString(), pill.Height.ToString(),
+            expand.X.ToString(), expand.Y.ToString(), expand.Width.ToString(), expand.Height.ToString()
+        }));
+    }
+
     // 用自带 logo 替换系统默认托盘图标
     public void SetTrayIcon(string path)
     {
@@ -696,9 +787,11 @@ public class FloatTool : NativeWindow
         RECT cr;
         if (!GetClientRect(fg, out cr)) return;
 
-        f.Work = WorkArea(fg);
+        f.Mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        f.Dpi = DpiOf(f.Mon);
+        f.Work = WorkArea(f.Mon);
         f.Corner = CornerOf(r.ToRect(), f.Work);
-        f.Slot = SlotCount(f.Corner);
+        f.Slot = SlotCount(f.Corner, f.Mon);
         ComputeRects(f, new Rectangle(0, 0, Math.Max(1, cr.Right), Math.Max(1, cr.Bottom)));
 
         // 先把悬浮窗建起来并抓一帧（此时源窗口还完全正常，抓帧最快），
@@ -707,7 +800,7 @@ public class FloatTool : NativeWindow
         f.Box.Source = fg;
         f.Box.SourceTitle = TitleOf(fg);
         f.Box.Fps = CaptureFps;
-        f.Box.GlowPad = GlowPad;
+        f.Box.GlowPad = Sc(GlowPad, f.Dpi);
         f.Box.ContentAlpha = ContentAlpha;
         f.Box.ImageRect = r.ToRect();
         f.Box.PrimeFrame();
@@ -761,9 +854,10 @@ public class FloatTool : NativeWindow
     void Remove(Floating f)
     {
         int corner = f.Corner;
+        IntPtr mon = f.Mon;
         Cleanup(f);
         floats.Remove(f);
-        Repack(corner);
+        Repack(corner, mon);
         UpdateTrayText();
     }
 
@@ -799,12 +893,13 @@ public class FloatTool : NativeWindow
         }
     }
 
-    void Repack(int corner)
+    // 补位：只重排"同一显示器 + 同一角落"的那一摞
+    void Repack(int corner, IntPtr mon)
     {
         int slot = 0;
         foreach (Floating f in floats.ToArray())
         {
-            if (f.Corner != corner) continue;
+            if (f.Corner != corner || f.Mon != mon) continue;
             if (f.Slot != slot)
             {
                 f.Slot = slot;
@@ -815,10 +910,10 @@ public class FloatTool : NativeWindow
         }
     }
 
-    int SlotCount(int corner)
+    int SlotCount(int corner, IntPtr mon)
     {
         int n = 0;
-        foreach (Floating f in floats) if (f.Corner == corner) n++;
+        foreach (Floating f in floats) if (f.Corner == corner && f.Mon == mon) n++;
         return n;
     }
 
@@ -925,7 +1020,7 @@ public class FloatTool : NativeWindow
             Cleanup(f);
             if (IsWindow(h)) Activate(h);
             floats.Remove(f);
-            Repack(f.Corner);
+            Repack(f.Corner, f.Mon);
             UpdateTrayText();
         }
         else if (f.Mode == Mode.Pill)
@@ -999,9 +1094,29 @@ public class FloatTool : NativeWindow
     }
 
     // ---------- 几何 ----------
-    Rectangle WorkArea(IntPtr h)
+    // 显示器 DPI。进程是 PER_MONITOR_AWARE_V2，坐标一律物理像素，
+    // 所以胶囊宽度/边距/光晕都要按 DPI 放大，否则 4K@150% 屏上会小一圈。
+    int DpiOf(IntPtr mon)
     {
-        IntPtr mon = MonitorFromWindow(h == IntPtr.Zero ? Handle : h, MONITOR_DEFAULTTONEAREST);
+        if (!ScaleWithDpi) return 96;
+        if (ForceDpi > 0) return ForceDpi;
+        try
+        {
+            uint dx, dy;
+            if (mon != IntPtr.Zero && GetDpiForMonitor(mon, 0 /* MDT_EFFECTIVE_DPI */, out dx, out dy) == 0
+                && dx >= 48 && dx <= 480)
+                return (int)dx;
+        }
+        catch { }   // shcore.dll 不可用（Win7）或 API 失败：退回 96
+        return 96;
+    }
+
+    // 逻辑像素 → 物理像素
+    static int Sc(int v, int dpi) { return (int)Math.Round(v * dpi / 96.0); }
+
+    Rectangle WorkArea(IntPtr mon)
+    {
+        if (mon == IntPtr.Zero) mon = MonitorFromWindow(Handle, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi = new MONITORINFO();
         mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
         if (mon != IntPtr.Zero && GetMonitorInfo(mon, ref mi)) return mi.rcWork.ToRect();
@@ -1020,28 +1135,75 @@ public class FloatTool : NativeWindow
     // 悬浮窗尺寸严格保持源窗口比例（等比缩放，不拉伸）
     void ComputeRects(Floating f, Rectangle orig)
     {
-        bool right = (f.Corner & 1) != 0;
-        bool bottom = (f.Corner & 2) != 0;
-        double aspect = orig.Width / (double)Math.Max(1, orig.Height);
+        // 同一摞里排在它前面的几个，实际高度各不相同，所以要把各自高度收集起来累加，
+        // 不能简单用 Slot * (ph + gap)——否则不同比例的胶囊会互相压住。
+        List<int> prior = new List<int>();
+        foreach (Floating o in floats.ToArray())
+        {
+            if (o == f || o.Corner != f.Corner || o.Mon != f.Mon) continue;
+            if (o.Slot >= f.Slot) continue;
+            prior.Add(o.Pill.Height);
+        }
+        Rectangle pill, expand;
+        Layout(f.Work, f.Dpi, f.Corner, orig.Width, orig.Height, prior.ToArray(), out pill, out expand);
+        f.Pill = pill;
+        f.Expand = expand;
+    }
 
-        int pw = Math.Max(200, Math.Min(PillWidth, f.Work.Width - 2 * Margin));
+    // 纯几何：给定显示器工作区 / DPI / 角落 / 源窗口比例，算出胶囊与放大态矩形。
+    // 不碰窗口也不碰列表，方便自检脚本用合成数据调用（单屏也能验证多屏布局）。
+    void Layout(Rectangle work, int dpi, int corner, int srcW, int srcH,
+                int[] priorHeights, out Rectangle pill, out Rectangle expand)
+    {
+        bool right = (corner & 1) != 0;
+        bool bottom = (corner & 2) != 0;
+        double aspect = srcW / (double)Math.Max(1, srcH);
+
+        int margin = Sc(Margin, dpi);
+        int gap = Sc(SlotGap, dpi);
+        int availW = Math.Max(1, work.Width - 2 * margin);
+        int availH = Math.Max(1, work.Height - 2 * margin);
+
+        int phMax = Math.Min(Sc(PillHeightMax, dpi), availH);
+        int pw = Math.Min(Sc(PillWidth, dpi), availW);
         int ph = (int)Math.Round(pw / aspect);
-        if (ph > PillHeightMax) { ph = PillHeightMax; pw = (int)Math.Round(ph * aspect); }
+        if (ph > phMax) { ph = phMax; pw = (int)Math.Round(ph * aspect); }
 
-        int px = right ? f.Work.Right - Margin - pw : f.Work.X + Margin;
-        int py = bottom
-            ? f.Work.Bottom - Margin - ph - f.Slot * (ph + SlotGap)
-            : f.Work.Y + Margin + f.Slot * (ph + SlotGap);
-        py = Math.Max(f.Work.Y + Margin, Math.Min(py, f.Work.Bottom - Margin - ph));
-        f.Pill = new Rectangle(px, py, pw, ph);
+        // 太窄的胶囊看不清，抬到最小宽度 —— 但只在抬完不超高时才抬，避免破坏等比
+        int minW = Sc(200, dpi);
+        if (pw < minW)
+        {
+            int h2 = (int)Math.Round(minW / aspect);
+            if (h2 <= phMax) { pw = minW; ph = h2; }
+        }
+        pw = Math.Max(1, Math.Min(pw, availW));
+        ph = Math.Max(1, Math.Min(ph, availH));
 
-        int ew = Math.Min(ExpandWidth, f.Work.Width - 2 * Margin);
+        int offset = 0;
+        if (priorHeights != null)
+            for (int i = 0; i < priorHeights.Length; i++) offset += priorHeights[i] + gap;
+
+        int px = right ? work.Right - margin - pw : work.X + margin;
+        int py = bottom ? work.Bottom - margin - ph - offset : work.Y + margin + offset;
+        py = Math.Max(work.Y + margin, Math.Min(py, work.Bottom - margin - ph));
+        pill = new Rectangle(px, py, pw, ph);
+
+        // 放大态：先按宽度定，再按高度收口，收口后一律重新按比例回算另一边，
+        // 否则在极小屏上（高度先撞上限）会出现拉伸变形。
+        int ew = Math.Min(Sc(ExpandWidth, dpi), availW);
         int eh = (int)Math.Round(ew / aspect);
-        if (eh > ExpandHeight) { eh = Math.Min(ExpandHeight, f.Work.Height - 2 * Margin); ew = (int)Math.Round(eh * aspect); }
-        ew = Math.Max(pw, ew); eh = Math.Max(ph, eh);
-        int ex = right ? f.Work.Right - Margin - ew : f.Work.X + Margin;
-        int ey = bottom ? f.Work.Bottom - Margin - eh : f.Work.Y + Margin;
-        f.Expand = new Rectangle(ex, ey, ew, eh);
+        if (eh > Sc(ExpandHeight, dpi))
+        {
+            eh = Sc(ExpandHeight, dpi);
+            ew = (int)Math.Round(eh * aspect);
+        }
+        ew = Math.Max(ew, pw);            // 至少不比胶囊小
+        eh = (int)Math.Round(ew / aspect);
+        if (eh > availH) { eh = availH; ew = (int)Math.Round(eh * aspect); }
+        if (ew > availW) { ew = availW; eh = (int)Math.Round(ew / aspect); }
+        int ex = right ? work.Right - margin - ew : work.X + margin;
+        int ey = bottom ? work.Bottom - margin - eh : work.Y + margin;
+        expand = new Rectangle(ex, ey, ew, eh);
     }
 
     static double EaseOutCubic(double t)
@@ -1091,6 +1253,8 @@ $tool.CaptureFps    = $CaptureFps
 $tool.GlowPad       = $GlowPad
 $tool.ContentAlpha  = $ContentAlpha
 $tool.ExpandFps     = $ExpandFps
+$tool.ScaleWithDpi  = $ScaleWithDpi
+if ($ForceDpi -gt 0) { $tool.ForceDpi = $ForceDpi }
 
 # 托盘图标：使用 assets 里的 logo（缺失则回退到系统默认）
 $iconPath = Join-Path $PSScriptRoot 'assets\anyfloat.ico'
@@ -1098,6 +1262,13 @@ if (Test-Path $iconPath) { $tool.SetTrayIcon($iconPath) }
 
 if ($SelfTest) {
     $tool.SelfTest()
+    [void][System.Windows.Forms.Application]::Exit()
+    return
+}
+
+if ($GeomProbe) {
+    # 几何自检：打印布局表后退出（dev/_multimon_test.ps1 用它验证多屏/DPI 边界）
+    $tool.GeomProbe()
     [void][System.Windows.Forms.Application]::Exit()
     return
 }

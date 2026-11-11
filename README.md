@@ -21,9 +21,19 @@ When you're running an agent, a build, or a long task, you want to keep an eye o
 - **Hover to enlarge** — rest the cursor for 90 ms and it expands to a readable size; move away and it collapses
 - **Click to restore** — animates back to its original position, restores the window's styles and activates it
 - **Multiple windows** — up to 6 at once, stacked along the screen edge, the rest re-pack when one is closed
+- **Multi-monitor aware** — each thumbnail sits on the monitor its source window lives on, and is sized for that monitor's DPI
 - **Crash recovery** — if the process is killed, the next launch automatically restores any window left in the "transparent + disabled" state
 
 ## Quick start
+
+**Option A — installer (recommended)**
+
+1. Download `anyfloat-v0.2.0.zip` from [Releases](https://github.com/Teassassin/anyfloat/releases) and extract it
+2. Right-click **`Install-AnyFloat.ps1`** → *Run with PowerShell*
+
+It copies the program to `%LOCALAPPDATA%\AnyFloat`, asks whether to start it on login (no admin rights needed), and launches it. Then switch to the window you want to watch and press **`Win+Shift+F`**.
+
+**Option B — run from the source folder**
 
 ```powershell
 git clone https://github.com/Teassassin/anyfloat.git
@@ -31,8 +41,6 @@ cd anyfloat
 ```
 
 Double-click **`Start-AnyFloat.vbs`** (starts without a console window — a tray icon means it's running).
-
-Then switch to the window you want to watch and press **`Win+Shift+F`**.
 
 > Requirements: Windows 10 / 11. No dependencies — PowerShell 5.1 is built in.
 
@@ -68,6 +76,7 @@ Edit the parameters at the top of `AnyFloat.ps1` and restart the script:
 | `$ExpandFps` | 20 | Capture rate while expanded |
 | `$GlowPad` | 12 | Soft glow thickness (0 disables) |
 | `$ContentAlpha` | 0.90 | Thumbnail opacity (1.0 = opaque) |
+| `$ScaleWithDpi` | `$true` | Scale pill width / margin / glow by the monitor's effective DPI, so it looks the same physical size at 100% and 150% |
 
 ## How it works
 
@@ -96,7 +105,23 @@ Edit the parameters at the top of `AnyFloat.ps1` and restart the script:
 
 ## Uninstall
 
-Right-click the tray icon → **Quit**, then delete the folder. AnyFloat writes no registry keys and leaves nothing behind (the debug log at `%TEMP%\anyfloat.log` only exists if you started with `-DebugLog`).
+If you used the installer, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\AnyFloat\Uninstall-AnyFloat.ps1"
+```
+
+It stops the tool, removes the startup entry and deletes the folder — and first runs the crash-recovery pass so no window is left invisible and frozen on your desktop.
+
+If you ran it from the source folder, just right-click the tray icon → **Quit**, then delete the folder. AnyFloat writes no registry keys and leaves nothing behind (the debug log at `%TEMP%\anyfloat.log` only exists if you started with `-DebugLog`).
+
+## Build from source
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+Produces `dist\anyfloat-v<version>.zip` plus its SHA256. The script refuses to build if a `.ps1` is missing its UTF-8 BOM, a `.vbs` has one (or contains non-ASCII), or anything from `AGENTS.md` / `dev/` sneaks into the package.
 
 ## Contributing
 

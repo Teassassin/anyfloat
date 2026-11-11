@@ -22,9 +22,19 @@ AnyFloat 把任意窗口变成贴在屏幕边缘的半透明小窗：**内容实
 - **悬停放大**：鼠标停 90ms 自动放大到可读尺寸，移开自动收回
 - **点击复原**：动画展开回原位，恢复窗口样式并激活
 - **多窗口**：最多同时悬浮 6 个，沿角落堆叠，关掉一个其余自动补位
+- **多显示器友好**：缩略图落在源窗口所在的那台显示器上，并按该屏 DPI 缩放尺寸
 - **崩溃自愈**：进程被强杀后，下次启动会自动把遗留在"透明+禁用"状态的窗口救回来
 
 ## 快速开始
+
+**方式一：安装脚本（推荐）**
+
+1. 从 [Releases](https://github.com/Teassassin/anyfloat/releases) 下载 `anyfloat-v0.2.0.zip` 并解压
+2. 右键 **`Install-AnyFloat.ps1`** → *使用 PowerShell 运行*
+
+它会把程序装到 `%LOCALAPPDATA%\AnyFloat`，询问是否开机自启（不需要管理员权限），装完直接启动。然后切到你想盯的窗口，按 **`Win+Shift+F`**。
+
+**方式二：直接从源码目录运行**
 
 ```powershell
 git clone https://github.com/Teassassin/anyfloat.git
@@ -32,8 +42,6 @@ cd anyfloat
 ```
 
 双击 **`Start-AnyFloat.vbs`**（无黑窗启动，托盘出现图标即成功）。
-
-然后切到你想盯的窗口，按 **`Win+Shift+F`**。
 
 > 系统要求：Windows 10 / 11，无需安装任何依赖（PowerShell 5.1 已内置）。
 
@@ -69,6 +77,7 @@ cd anyfloat
 | `$ExpandFps` | 20 | 放大状态抓帧率 |
 | `$GlowPad` | 12 | 虚化边框厚度（0 = 关闭） |
 | `$ContentAlpha` | 0.90 | 画面不透明度（1.0 = 不透明） |
+| `$ScaleWithDpi` | `$true` | 按所在显示器的有效 DPI 缩放胶囊宽度 / 边距 / 光晕，让 100% 和 150% 屏上物理大小一致 |
 
 ## 工作原理
 
@@ -97,7 +106,23 @@ cd anyfloat
 
 ## 卸载
 
-托盘图标右键 → **退出**，然后删除文件夹即可。本工具不写注册表、不留残留（调试日志在 `%TEMP%\anyfloat.log`，仅在 `-DebugLog` 时生成）。
+用过安装脚本的话：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\AnyFloat\Uninstall-AnyFloat.ps1"
+```
+
+它会停掉程序、移除开机自启、删除安装目录；**删除前会先跑一次崩溃自愈**，不会在你桌面上留下一片看不见又点不动的窗口。
+
+直接从源码目录运行的话，托盘图标右键 → **退出**，然后删掉文件夹即可。本工具不写注册表、不留残留（调试日志在 `%TEMP%\anyfloat.log`，仅在 `-DebugLog` 时生成）。
+
+## 自行打包
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+产出 `dist\anyfloat-v<版本>.zip` 及对应 SHA256。脚本会在打包前拦住这些情况：`.ps1` 缺 UTF-8 BOM、`.vbs` 带了 BOM 或含非 ASCII、包里混进了 `AGENTS.md` / `dev/`。
 
 ## 贡献
 
