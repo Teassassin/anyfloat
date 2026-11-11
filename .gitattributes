@@ -1,0 +1,7 @@
+* text=auto
+
+# PowerShell / VBScript 统一 CRLF；注意 .ps1 必须带 UTF-8 BOM，.vbs 必须无 BOM
+*.ps1 text eol=crlf
+*.vbs text eol=crlf
+*.md  text eol=lf
+*.gif binary

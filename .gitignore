@@ -1,0 +1,24 @@
+# 调试日志
+*.log
+anyfloat.log
+agentfloat.log
+
+# 构建产物
+out/
+dist/
+*.zip
+*.7z
+
+# 编辑器 / IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# 临时脚本
+*.tmp
