@@ -1,5 +1,7 @@
 # AnyFloat
 
+![AnyFloat](assets/anyfloat_banner.png)
+
 [English](README.md) | **简体中文**
 
 > 把任意窗口变成**实时缩略图悬浮窗**——只读监看，点击复原。

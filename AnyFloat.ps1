@@ -607,6 +607,16 @@ public class FloatTool : NativeWindow
 
     public int FloatingCount { get { return floats.Count; } }
 
+    // 用自带 logo 替换系统默认托盘图标
+    public void SetTrayIcon(string path)
+    {
+        try
+        {
+            if (tray != null && System.IO.File.Exists(path)) tray.Icon = new Icon(path);
+        }
+        catch { }
+    }
+
     // 测试用：直接对指定窗口启动悬浮，不依赖前台焦点
     public void FloatHwnd(IntPtr h)
     {
@@ -1081,6 +1091,10 @@ $tool.CaptureFps    = $CaptureFps
 $tool.GlowPad       = $GlowPad
 $tool.ContentAlpha  = $ContentAlpha
 $tool.ExpandFps     = $ExpandFps
+
+# 托盘图标：使用 assets 里的 logo（缺失则回退到系统默认）
+$iconPath = Join-Path $PSScriptRoot 'assets\anyfloat.ico'
+if (Test-Path $iconPath) { $tool.SetTrayIcon($iconPath) }
 
 if ($SelfTest) {
     $tool.SelfTest()

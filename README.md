@@ -1,5 +1,7 @@
 # AnyFloat
 
+![AnyFloat](assets/anyfloat_banner.png)
+
 **English** | [简体中文](README.zh-CN.md)
 
 > Turn any window into a live, read-only picture-in-picture thumbnail — click to restore.
