@@ -126,7 +126,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 ## 贡献
 
-问题反馈和 PR 都欢迎。开发和测试脚本在 [anyfloat-dev](https://github.com/Teassassin/anyfloat-dev) 仓库。
+问题反馈和 PR 都欢迎。`AnyFloat.ps1` 是单文件、零依赖的，改完直接跑 `build.ps1 -Check` 再提 PR 即可。布局逻辑集中在 `Layout()`；`-GeomProbe` 会用一组合成的工作区（多屏、4K、极小屏）打印算出来的矩形，没有额外硬件也能验证几何改动。
 
 ## 许可
 

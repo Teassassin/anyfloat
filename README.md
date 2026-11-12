@@ -125,7 +125,7 @@ Produces `dist\anyfloat-v<version>.zip` plus its SHA256. The script refuses to b
 
 ## Contributing
 
-Issues and pull requests are welcome. Development and test scripts live in the [anyfloat-dev](https://github.com/Teassassin/anyfloat-dev) repository.
+Issues and pull requests are welcome. `AnyFloat.ps1` is a single self-contained script — no build step, no dependencies — so you can hack on it directly and run `build.ps1 -Check` before sending a PR. Layout code lives in `Layout()`; `-GeomProbe` prints the computed rects for a set of synthetic work areas (multi-monitor, 4K, tiny screens) so you can verify geometry changes without extra hardware.
 
 ## License
 
